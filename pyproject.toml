@@ -1,5 +1,5 @@
 [project]
-name = "ai-employee"
+name = "coding-agent"
 version = "0.1.0"
 description = "Claude Code from scratch."
 requires-python = ">=3.14"
