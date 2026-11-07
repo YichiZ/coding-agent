@@ -5,6 +5,7 @@ description = "Claude Code from scratch."
 requires-python = ">=3.14"
 dependencies = [
     "anthropic",
+    "dotenv>=0.9.9",
 ]
 
 [tool.uv]
