@@ -1,6 +1,8 @@
-# ai-employee
+# coding-agent
 
 Coding agent from scratch.
+
+https://ampcode.com/notes/how-to-build-an-agent
 
 1. Barebone. One message, print the text.
 
