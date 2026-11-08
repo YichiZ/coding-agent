@@ -4,6 +4,8 @@ Coding agent from scratch.
 
 https://ampcode.com/notes/how-to-build-an-agent
 
+https://www.mihaileric.com/The-Emperor-Has-No-Clothes/
+
 1. Barebone. One message, print the text.
 
 ## TODO
