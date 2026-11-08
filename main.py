@@ -1,13 +1,18 @@
+import json
 import os
 import subprocess
+from pathlib import Path
+
+from anthropic import beta_tool
 
 import anthropic
+from anthropic.lib.tools import BetaFunctionTool
 from dotenv import load_dotenv
 
 SYSTEM_PROMPT = """
 You are a coding agent.
 
-You have access to a few tools
+You have access to a few tools.
 
 
 Print out on a single line when you execute a tool.
@@ -17,35 +22,90 @@ USER_MULTI_TURN_PROMPT = """
 List all files. Summarize the python files
 """
 
+
+def resolve_abs_path(path_str: str) -> Path:
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    return path
+
+
+@beta_tool
+def read_file_tool(filename: str) -> dict[str, any]:
+    """
+    Read the content of a file.
+
+    Args:
+        filename: Path to a file.
+    """
+    full_path = resolve_abs_path(filename)
+    print(full_path)
+    with open(str(full_path), "r") as f:
+        content = f.read()
+    return {"file_path": str(full_path), "content": content}
+
+
+@beta_tool
+def edit_file_tool(path: str, old_str: str, new_str: str) -> dict[str, any]:
+    """
+    Edit a file inside a path. If the old_str is empty, create the file, otherwise
+    overwrite it. If we have an old_str but we don't see it, return an error.
+
+    Args:
+        path: Path to the file.
+        old_str: String to be replaced, or empty if the file does not exist.
+        new_str: New string to replace or append.
+    """
+    full_path = resolve_abs_path(path)
+    if old_str == "":
+        full_path.write_text(new_str, encoding="utf-8")
+        return {"path": str(full_path), "action": "created_file"}
+    original = full_path.read_text(encoding="utf-8")
+    if original.find(old_str) == -1:
+        return {"path": str(full_path), "action": "old_str not found"}
+    edited = original.replace(old_str, new_str, 1)
+    full_path.write_text(edited, encoding="utf-8")
+    return {"path": str(full_path), "action": "edited"}
+
+
+@beta_tool
+def list_files_tool(path: str) -> dict[str, any]:
+    """
+    List all the files and folders in a directory.
+
+    Args:
+        path: Path to a directory.
+    """
+    full_path = resolve_abs_path(path)
+    all_files = []
+    for item in full_path.iterdir():
+        all_files.append(
+            {"filename": item.name, "type": "file" if item.is_file() else "dir"}
+        )
+    return {"path": str(full_path), "files": all_files}
+
+
+@beta_tool
 def bash_tool(command: str) -> str:
     """
-    Runs a shell command and returns its combined output.
-    :param command: The shell command to run.
+    Runs a shell command and returns its combined stdout and stderr. Use this to inspect files, run scripts, and check command output.
+
+    Args:
+        command: The shell command to run.
     """
     r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
     return (r.stdout + r.stderr).strip() or "(no output)"
 
 
-TOOLS = [
-    {
-        "name": "bash_tool",
-        "description": "Runs a shell command and returns its combined stdout and stderr. Use this to inspect files, run scripts, and check command output.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to run (e.g., 'ls sandbox' or 'python main.py').",
-                }
-            },
-            "required": ["command"],
-        },
-    },
-]
-
-TOOL_REGISTRY = {
-    "bash_tool": bash_tool
+TOOL_REGISTRY: dict[str, BetaFunctionTool] = {
+    "bash_tool": bash_tool,
+    "read_file_tool": read_file_tool,
+    "edit_file_tool": edit_file_tool,
+    "list_files_tool": list_files_tool,
 }
+
+TOOLS = [toolFn.to_dict() for toolFn in TOOL_REGISTRY.values()]
+
 
 def main() -> None:
     client = anthropic.Anthropic(
@@ -80,7 +140,11 @@ def main() -> None:
             break
 
         # check tool uses
-        tool_invocations = [(block.name, block.input, block.id) for block in message.content if block.type == "tool_use"]
+        tool_invocations = [
+            (block.name, block.input, block.id)
+            for block in message.content
+            if block.type == "tool_use"
+        ]
 
         messages.append({"role": "assistant", "content": message.content})
 
@@ -91,21 +155,17 @@ def main() -> None:
             tool_uses = []
             for name, args, id in tool_invocations:
                 tool = TOOL_REGISTRY[name]
-                resp=""
-                print(name, args)
-                if name == "bash_tool":
-                    resp = tool(args.get("command",""))
 
-                tool_uses.append({
-                    "type": "tool_result", 
-                    "tool_use_id": id, 
-                    "content": resp
-                }),
-            
-            messages.append({
-                "role": "user",
-                "content": tool_uses
-            })
+                print(name, args)
+                resp = tool(**args)         
+
+                (
+                    tool_uses.append(
+                        {"type": "tool_result", "tool_use_id": id, "content": json.dumps(resp)}
+                    ),
+                )
+
+            messages.append({"role": "user", "content": tool_uses})
 
 
 if __name__ == "__main__":
